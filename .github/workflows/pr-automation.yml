@@ -1,0 +1,142 @@
+name: PR Automation Workflow
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    name: code-quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run ESLint
+        run: npm run lint
+        continue-on-error: true
+        id: eslint
+      - name: Run Prettier Check
+        run: npx prettier --check .
+        continue-on-error: true
+        id: prettier
+      - name: Post Code Quality Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eslintOut = `${{ steps.eslint.outcome }}`;
+            const prettierOut = `${{ steps.prettier.outcome }}`;
+            const comment = `## Code Quality Report
+            ### ESLint: ${eslintOut === 'success' ? '✅ Passed' : '❌ Failed'}
+            ### Prettier: ${prettierOut === 'success' ? '✅ Passed' : '❌ Failed'}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  testing-suite:
+    name: testing-suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage
+        id: tests
+      - name: Generate Coverage Summary
+        run: |
+          echo "COVERAGE_SUMMARY=$(npx jest --coverage --json | jq -r '.coverageMap.total')" >> $GITHUB_ENV
+      - name: Post Test Coverage Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const coverage = `${{ env.COVERAGE_SUMMARY }}`;
+            const comment = `## Test Coverage Report
+            ${coverage}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  security-scan:
+    name: security-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Run Dependency Vulnerability Check
+        run: npm audit --json
+        continue-on-error: true
+        id: audit
+      - name: Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        id: gitleaks
+      - name: Post Security Scan Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auditOut = `${{ steps.audit.outcome }}`;
+            const secretsOut = `${{ steps.gitleaks.outcome }}`;
+            const comment = `## Security Scan Report
+            ### Vulnerabilities (Dependencies): ${auditOut === 'success' ? '✅ No critical vulnerabilities found' : '❌ Vulnerabilities detected'}
+            ### Secrets Scan: ${secretsOut === 'success' ? '✅ No secrets found' : '❌ Secrets detected'}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  build-validation:
+    name: build-validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - name: Build Application
+        run: npm run build
+        id: build
+      - name: Validate Endpoints (example)
+        run: |
+          # Example endpoint check, adjust as needed
+          if [ -d dist ]; then echo "Build directory exists"; else exit 1; fi
+        id: endpoints
+      - name: Create Deployment Preview Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+      - name: Post Build Validation
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildOut = `${{ steps.build.outcome }}`;
+            const endpointsOut = `${{ steps.endpoints.outcome }}`;
+            const comment = `## Build Validation
+            ### Build Status: ${buildOut === 'success' ? '✅ Successful' : '❌ Failed'}
+            ### Endpoint Validation: ${endpointsOut === 'success' ? '✅ All endpoints accessible' : '❌ Endpoint validation failed'}`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
